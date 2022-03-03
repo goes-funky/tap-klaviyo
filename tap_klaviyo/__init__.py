@@ -114,7 +114,7 @@ LIST_MEMBERS = Stream(
 PROFILES = Stream(
     'profiles',
     'profiles',
-    'id',
+    ['id', "list_id"],
     'FULL_TABLE'
 )
 
