@@ -121,7 +121,7 @@ PROFILES = Stream(
 CAMPAIGNS = Stream(
     'campaigns',
     'campaigns',
-    'id',
+    ['id', "list_id",
     'FULL_TABLE'
 )
 

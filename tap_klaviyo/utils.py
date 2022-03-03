@@ -55,6 +55,9 @@ def get_latest_event_time(events):
     return ts_to_dt(int(events[-1]['timestamp'])) if len(events) else None
 
 
+@backoff.on_exception(backoff.expo, (requests.exceptions.ConnectionError,
+                                     urllib3.exceptions.ProtocolError, ConnectionResetError),
+                      max_tries=5)
 def authed_get(source, url, params):
     with metrics.http_request_timer(source) as timer:
         resp = session.request(method='get', url=url, params=params)
@@ -141,7 +144,6 @@ def get_list_members_pull(resource, api_key):
             total_lists = len(lists)
             pushed_profile_ids = []
             current_list = 0
-
             for list in lists:
                 current_list += 1
                 logger.info("Syncing list " + list['id'] + " : " + str(current_list) + " of " + str(total_lists))
@@ -160,7 +162,7 @@ def get_list_members_pull(resource, api_key):
                             if record["id"] not in pushed_profile_ids:
                                 endpoint = f"https://a.klaviyo.com/api/v1/person/{record['id']}"
                                 data = request_with_retry(endpoint, params={'api_key': api_key})
-                                data['list_id'] =  list['id']
+                                data['list_id'] = list['id']
                                 data = singer.transform(data, resource['schema'])
                                 singer.write_records(resource['stream'], [data])
                                 pushed_profile_ids.append(record["id"])
