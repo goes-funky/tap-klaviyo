@@ -1,7 +1,10 @@
 {
   "type": "object",
   "properties": {
-    "id": {
+    "list_id" : {
+      "type" : "string"
+    },
+     "id": {
       "type": "string"
     },
     "$address1": {

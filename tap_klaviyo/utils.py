@@ -141,6 +141,7 @@ def get_list_members_pull(resource, api_key):
             total_lists = len(lists)
             pushed_profile_ids = []
             current_list = 0
+
             for list in lists:
                 current_list += 1
                 logger.info("Syncing list " + list['id'] + " : " + str(current_list) + " of " + str(total_lists))
@@ -159,6 +160,7 @@ def get_list_members_pull(resource, api_key):
                             if record["id"] not in pushed_profile_ids:
                                 endpoint = f"https://a.klaviyo.com/api/v1/person/{record['id']}"
                                 data = request_with_retry(endpoint, params={'api_key': api_key})
+                                data['list_id'] =  list['id']
                                 data = singer.transform(data, resource['schema'])
                                 singer.write_records(resource['stream'], [data])
                                 pushed_profile_ids.append(record["id"])
