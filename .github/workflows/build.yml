@@ -15,5 +15,4 @@ jobs:
       skip-format: true
       skip-lint: true
     secrets:
-      ssh-private-key: ${{ secrets.GH_REPO_READ_SSH_KEY }}
       codecov-token: ${{ secrets.CODECOV_TOKEN }}
