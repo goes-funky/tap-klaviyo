@@ -26,6 +26,7 @@ coverage = "^6.4.2"
 [tool.poetry.scripts]
 tap-klaviyo = "tap_klaviyo:main"
 
+
 [tool.pytest.ini_options]
 testpaths = [
     "tests"
