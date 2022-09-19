@@ -130,7 +130,7 @@ vcrpy = "^4.2.0"
 
 [package.source]
 type = "git"
-url = "https://github.com/goes-funky/integrations-testing-framework.git"
+url = "http://github.com/goes-funky/integrations-testing-framework.git"
 reference = "master"
 resolved_reference = "760e60fcc235f4c2c69eb210a3c7c1dfa5aebcdd"
 
@@ -506,7 +506,7 @@ testing = ["func-timeout", "jaraco.itertools", "pytest (>=6)", "pytest-black (>=
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "19e1acfefd49f5b8bb54851560e30d4b6204e181e214c1c283c84d507f8b9d56"
+content-hash = "df02c007d161a9a1ee1a4df34080ccbe6664f4fd939ebcd4e2462f67d1ef0da3"
 
 [metadata.files]
 astroid = []
