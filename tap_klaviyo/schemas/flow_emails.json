@@ -8,10 +8,10 @@
       "type": "string"
     },
     "name": {
-      "type": "integer"
+      "type": "string"
     },
     "from_email": {
-      "type": "integer"
+      "type": "string"
     },
     "subject": {
       "type": "string"
