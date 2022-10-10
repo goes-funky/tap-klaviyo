@@ -12,8 +12,8 @@ authors = ['Stitch']
 
 [tool.poetry.dependencies]
 python = "^3.9"
-requests = "2.20.0"
-singer-python= "ˆ5.8.1"
+requests = "2.26.0"
+singer-python = "5.12.2"
 
 [tool.poetry.dev-dependencies]
 integrations-testing-framework = {git = "http://github.com/goes-funky/integrations-testing-framework.git"}

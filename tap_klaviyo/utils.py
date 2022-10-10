@@ -182,7 +182,6 @@ def get_list_members_pull(resource, api_key):
 
 def get_flow_emails(resource, api_key):
     with metrics.record_counter(resource['stream']) as counter:
-        pushed_flow_ids = set()
         for response in get_all_pages('lists', 'https://a.klaviyo.com/api/v1/flows', api_key):
             flows = response and response["data"]
             total_flows = len(flows)
@@ -214,6 +213,7 @@ def get_flow_emails(resource, api_key):
                         for email in flow_emails:
                             flow_emails[email]["flow_id"] = flow["id"]
                             flow_emails[email]["message_id"] = email["id"]
+                            counter.increment()
                     else:
                         flow_emails["flow_id"] = flow["id"]
                         flow_emails["message_id"] = flow_emails["id"]
