@@ -182,3 +182,44 @@ def get_list_members_pull(resource, api_key):
                         next_marker = True
                     else:
                         break
+
+
+def get_flow_emails(resource, api_key):
+    with metrics.record_counter(resource['stream']) as counter:
+        pushed_profile_ids = set()
+        for response in get_all_pages('lists', 'https://a.klaviyo.com/api/v1/flow', api_key):
+            lists = response
+            lists = lists['data']
+            total_lists = len(lists)
+            current_list = 0
+            for list in lists:
+                current_list += 1
+                logger.info("Syncing list " + list['id'] + " : " + str(current_list) + " of " + str(total_lists))
+
+                list_endpoint = 'https://a.klaviyo.com/api/v1/flow/' + list['id'] + '/action'
+                next_marker = True
+                marker = None
+                while next_marker:
+                    data = request_with_retry(list_endpoint, params={'api_key': api_key, 'marker': marker})
+                    if "records" not in data:
+                        break
+                    records = data['records']
+                    logger.info("This list " + list['id'] + " has : " + str(len(records)))
+                    if resource["tap_stream_id"] == "profiles":
+                        for record in records:
+                            if record["id"] not in pushed_profile_ids:
+                                endpoint = f"https://a.klaviyo.com/api/v1/person/{record['id']}"
+                                datas = request_with_retry(endpoint, params={'api_key': api_key})
+                                datas = singer.transform(datas, resource['schema'])
+                                singer.write_records(resource['stream'], [datas])
+                                pushed_profile_ids.add(record["id"])
+                    else:
+                        for record in records:
+                            record['list_id'] = list['id']
+                            counter.increment()
+                        singer.write_records(resource['stream'], records)
+                    if "marker" in data:
+                        marker = data['marker']
+                        next_marker = True
+                    else:
+                        break
