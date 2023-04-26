@@ -207,16 +207,11 @@ def discover(api_key):
                         for a in metric_streams + FULL_STREAMS]}
 
 
-def do_discover(api_key):
-    data = json.dumps(discover(api_key), indent=2);
-    print(data)
-
-
 def main():
     args = singer.utils.parse_args(REQUIRED_CONFIG_KEYS)
 
     if args.discover:
-        do_discover(args.config['api_key'])
+        discover(args.config['api_key'])
 
     else:
         catalog = args.catalog.to_dict() if args.catalog else discover(
