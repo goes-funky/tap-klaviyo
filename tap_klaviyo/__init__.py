@@ -4,6 +4,7 @@ import json
 import os
 import singer
 from singer import metadata
+from singer.catalog import Catalog, write_catalog
 from tap_klaviyo.utils import *
 
 ENDPOINTS = {
@@ -203,8 +204,10 @@ def get_available_metrics(api_key):
 
 def discover(api_key):
     metric_streams = get_available_metrics(api_key)
-    return {"streams": [a.to_catalog_dict()
-                        for a in metric_streams + FULL_STREAMS]}
+    streams_dict = {"streams": [a.to_catalog_dict() for a in metric_streams + FULL_STREAMS]}
+    catalog = Catalog.from_dict(streams_dict)
+
+    write_catalog(catalog)
 
 
 def main():
