@@ -12,7 +12,7 @@ authors = ['Stitch']
 
 [tool.poetry.dependencies]
 python = "^3.9"
-requests = "2.26.0"
+requests = "2.31.0"
 singer-python = "5.12.2"
 
 [tool.poetry.dev-dependencies]
