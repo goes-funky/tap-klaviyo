@@ -158,8 +158,6 @@ def raise_for_error(response):
         raise exc(message) from None
 
 def dt_to_ts(dt):
-    # Remove microseconds
-    dt = dt[:19]
     return int(time.mktime(datetime.datetime.strptime(
         dt, DATETIME_FMT).timetuple()))
 
@@ -230,7 +228,7 @@ def get_incremental_pull(stream, endpoint, state, headers, start_date):
 
     with metrics.record_counter(stream['stream']) as counter:
         params = {
-            "filter": f"equals(metric_id,\"{stream['tap_stream_id']}\"),greater-or-equal(timestamp,{latest_event_time})",
+            "filter": f"equals(metric_id,\"{stream['stream']}\"),greater-or-equal(timestamp,{latest_event_time})",
             "include": "profile,metric",
             "sort": "datetime"
         }

@@ -59,7 +59,7 @@ class Stream(object):
         
         # Load shared schema
         refs = load_shared_schema_refs()
-
+        schema = singer.resolve_schema_references(schema, refs)
         valid_replication_keys = ["timestamp"]
 
         if self.tap_stream_id == 'list_members':
@@ -175,7 +175,7 @@ def do_sync(config, state, catalog, headers):
             stream['key_properties']
         )
 
-        if stream['stream'] in EVENT_MAPPINGS.values():
+        if stream['tap_stream_id'] in EVENT_MAPPINGS.values():
             get_incremental_pull(stream, ENDPOINTS['events'], state,
                                  headers, start_date)
         else:
@@ -216,6 +216,7 @@ def main():
     args = singer.utils.parse_args(REQUIRED_CONFIG_KEYS)
     headers = {
         "Authorization": f"Klaviyo-API-Key {args.config.get('api_key')}",
+        "accept": "application/json",
         "revision": API_VERSION
     }
 
