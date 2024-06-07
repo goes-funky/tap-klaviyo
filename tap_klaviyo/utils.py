@@ -3,19 +3,161 @@ import time
 import backoff
 import simplejson
 import singer
-import urllib3.exceptions
-from singer import metrics
+from singer import metrics, metadata, Transformer
 import requests
+import backoff
+import simplejson
 
-DATETIME_FMT = "%Y-%m-%dT%H:%M:%S"
+DATETIME_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
+# set default timeout of 300 seconds
+REQUEST_TIMEOUT = 300
 
 session = requests.Session()
 logger = singer.get_logger()
 
+STREAM_PARAMS_MAP = {
+    "campaigns": [
+        {
+            "filter": "equals(messages.channel,'email')",
+            "include": "tags,campaign-messages"
+        }
+    ],
+    "global_exclusions": [
+        {
+            "filter": "equals(subscriptions.email.marketing.suppression.reason,'HARD_BOUNCE')",
+            "additional-fields[profile]": "subscriptions,predictive_analytics"
+        },
+        {
+            "filter": "equals(subscriptions.email.marketing.suppression.reason,'USER_SUPPRESSED')",
+            "additional-fields[profile]": "subscriptions,predictive_analytics"
+        },
+        {
+            "filter": "equals(subscriptions.email.marketing.suppression.reason,'UNSUBSCRIBE')",
+            "additional-fields[profile]": "subscriptions,predictive_analytics"
+        },
+        {
+            "filter": "equals(subscriptions.email.marketing.suppression.reason,'INVALID_EMAIL')",
+            "additional-fields[profile]": "subscriptions,predictive_analytics"
+        }
+    ],
+    "lists": [
+        {
+            "include": "tags"
+        }
+    ]
+
+}
+
+class KlaviyoError(Exception):
+    pass
+
+class KlaviyoBackoffError(KlaviyoError):
+    pass
+
+class KlaviyoNotFoundError(KlaviyoError):
+    pass
+
+class KlaviyoBadRequestError(KlaviyoError):
+    pass
+
+class KlaviyoUnauthorizedError(KlaviyoError):
+    pass
+
+class KlaviyoForbiddenError(KlaviyoError):
+    pass
+
+class KlaviyoConflictError(KlaviyoError):
+    pass
+
+class KlaviyoRateLimitError(KlaviyoBackoffError):
+    pass
+
+class KlaviyoInternalServiceError(KlaviyoBackoffError):
+    pass
+
+class KlaviyoNotImplementedError(KlaviyoBackoffError):
+    pass
+
+class KlaviyoBadGatewayError(KlaviyoBackoffError):
+    pass
+
+class KlaviyoServiceUnavailableError(KlaviyoBackoffError):
+    pass
+
+class KlaviyoGatewayTimeoutError(KlaviyoBackoffError):
+    pass
+
+class KlaviyoServerTimeoutError(KlaviyoBackoffError):
+    pass
+
+ERROR_CODE_EXCEPTION_MAPPING = {
+    400: {
+        "raise_exception": KlaviyoBadRequestError,
+        "message": "Request is missing or has a bad parameter."
+    },
+    401: {
+        "raise_exception": KlaviyoUnauthorizedError,
+        "message": "Invalid authorization credentials."
+    },
+    403: {
+        "raise_exception": KlaviyoForbiddenError,
+        "message": "Invalid authorization credentials or permissions."
+    },
+    404: {
+        "raise_exception": KlaviyoNotFoundError,
+        "message": "The requested resource doesn't exist."
+    },
+    409: {
+        "raise_exception": KlaviyoConflictError,
+        "message": "The API request cannot be completed because the requested operation would conflict with an existing item."
+    },
+    429: {
+        "raise_exception": KlaviyoRateLimitError,
+        "message": "The API rate limit for your organization/application pairing has been exceeded."
+    },
+    500: {
+        "raise_exception": KlaviyoInternalServiceError,
+        "message": "Internal Service Error from Klaviyo."
+    },
+    501: {
+        "raise_exception": KlaviyoNotImplementedError,
+        "message": "The server does not support the functionality required to fulfill the request."
+    },
+    502: {
+        "raise_exception": KlaviyoBadGatewayError,
+        "message": "Server received an invalid response from another server."
+    },
+    503: {
+        "raise_exception": KlaviyoServiceUnavailableError,
+        "message": "API service is currently unavailable."
+    },
+    504: {
+        "raise_exception": KlaviyoGatewayTimeoutError,
+        "message": "Server did not return a response from another server."
+    },
+    524: {
+        "raise_exception": KlaviyoServerTimeoutError,
+        "message": "Server took too long to respond to the request."
+    },
+}
+
+def raise_for_error(response):   
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        try:
+            json_resp = response.json()
+        except (ValueError, TypeError, IndexError, KeyError):
+            json_resp = {}
+
+        error_code = response.status_code
+        message_text = json_resp.get("message", ERROR_CODE_EXCEPTION_MAPPING.get(error_code, {}).get("message", "Unknown Error"))
+        message = "HTTP-error-code: {}, Error: {}".format(error_code, message_text)
+        exc = ERROR_CODE_EXCEPTION_MAPPING.get(error_code, {}).get("raise_exception", KlaviyoError)
+        raise exc(message) from None
 
 def dt_to_ts(dt):
-    # Remove microseconds
-    dt = dt[:19]
     return int(time.mktime(datetime.datetime.strptime(
         dt, DATETIME_FMT).timetuple()))
 
@@ -51,179 +193,119 @@ def get_starting_point(stream, state, start_date):
         return None
 
 
+# Decrease timestamp(maximum replication key value) by 1 second.
+# Because API returns records in which the replication key value is greater than the last saved bookmark value.
+# So, sometimes records with the same bookmark value may be lost.
 def get_latest_event_time(events):
-    return ts_to_dt(int(events[-1]['timestamp'])) if len(events) else None
+    return ts_to_dt(int(events[-1]['timestamp']) - 1) if len(events) else None
 
-
-@backoff.on_exception(backoff.expo, (requests.exceptions.ConnectionError,
-                                     urllib3.exceptions.ProtocolError, ConnectionResetError, simplejson.scanner.JSONDecodeError),
-                      max_tries=10)
-def authed_get(source, url, params):
+# during 'Timeout' error there is also possibility of 'ConnectionError',
+# hence added backoff for 'ConnectionError' too.
+@backoff.on_exception(backoff.expo, (requests.Timeout, requests.ConnectionError), max_tries=5, factor=2)
+@backoff.on_exception(backoff.expo, (simplejson.scanner.JSONDecodeError, KlaviyoBackoffError), max_tries=3)
+def authed_get(source, url, params, headers):
     with metrics.http_request_timer(source) as timer:
-        resp = session.request(method='get', url=url, params=params)
-        timer.tags[metrics.Tag.http_status_code] = resp.status_code
-        return resp.json()
-
-
-def get_all_using_next(stream, url, api_key, since=None):
-    while True:
-        r = authed_get(stream, url, {'api_key': api_key,
-                                     'since': since,
-                                     'sort': 'asc'})
-        yield r
-        if 'next' in r and r['next']:
-            since = r['next']
+        resp = requests.get(url=url, params=params, headers=headers, timeout=get_request_timeout())
+        
+        if resp.status_code != 200:
+            raise_for_error(resp)
         else:
-            break
+            resp.json()
+            timer.tags[metrics.Tag.http_status_code] = resp.status_code
+            return resp
 
-
-def get_all_pages(source, url, api_key):
-    page = 0
-    while True:
-        r = authed_get(source, url, {'page': page, 'api_key': api_key})
+def get_all_using_next(stream, url, headers, params):
+    # Paginate till there is a url or next url.
+    while url:
+        r = authed_get(stream, url, params, headers)
+        # Re-initializing params to {} as next url contains all necessary params.
+        params = {}
         yield r
-        if r['end'] < r['total'] - 1:
-            page += 1
-        else:
-            break
+        url = r.json()['links'].get('next', None)
 
-
-def get_incremental_pull(stream, endpoint, state, api_key, start_date):
+def get_incremental_pull(stream, endpoint, state, headers, start_date):
     latest_event_time = get_starting_point(stream, state, start_date)
 
     with metrics.record_counter(stream['stream']) as counter:
-        url = '{}{}/timeline'.format(
-            endpoint,
-            stream['stream']
-        )
-        for response in get_all_using_next(
-                stream['stream'], url, api_key,
-                latest_event_time):
-            events = response.get('data')
+        params = {
+            "filter": f"equals(metric_id,\"{stream['stream']}\"),greater-or-equal(timestamp,{latest_event_time})",
+            "include": "profile,metric",
+            "sort": "datetime"
+        }
+        for response in get_all_using_next(stream['stream'], endpoint, headers, params):
+            events = response.json().get('data')
+
             if events:
+                included_list = response.json().get('included', [])
+                # Creating a dict/map of included relationships to optimize computations
+                included = {}
+                for included_relationship in included_list:
+                    included[included_relationship['id']] = included_relationship
                 counter.increment(len(events))
-
-                singer.write_records(stream['stream'], events)
-
+                transfrom_and_write_records(events, stream, included, params.get("include","").split(","))
                 update_state(state, stream['stream'], get_latest_event_time(events))
                 singer.write_state(state)
 
     return state
 
+def get_full_pulls(resource, endpoint, headers):
 
-def get_full_pulls(resource, endpoint, api_key):
     with metrics.record_counter(resource['stream']) as counter:
-        for response in get_all_pages(resource['stream'], endpoint, api_key):
-            records = response.get('data')
-
-            counter.increment(len(records))
-
-            singer.write_records(resource['stream'], records)
-
-
-@backoff.on_exception(backoff.expo, (
-        simplejson.scanner.JSONDecodeError, requests.exceptions.ConnectionError,
-        urllib3.exceptions.ProtocolError,ConnectionResetError, requests.exceptions.Timeout),
-                      max_tries=10)
-def request_with_retry(endpoint, params):
-    while True:
-        global session
-        r = session.get(endpoint, params=params)
-        if r.status_code != 200:
-            session = requests.Session()
-
-        if r.status_code == 429 or r.status_code == 408:
-            retry_after = int(r.headers['retry-after'])
-            time.sleep(retry_after)
-            continue
-        return r.json()
+        for params in STREAM_PARAMS_MAP.get(resource['stream'],[]):
+            for response in get_all_using_next(resource['stream'], endpoint, headers, params):
+                records = response.json().get('data')
+                included_list = response.json().get('included', [])
+                # Creating a dict/map of included relationships to optimize computations
+                included = {}
+                for included_relationship in included_list:
+                    included[included_relationship['id']] = included_relationship
+                counter.increment(len(records))
+                transfrom_and_write_records(records, resource, included, params.get("include","").split(","))
 
 
-def get_list_members_pull(resource, api_key):
-    with metrics.record_counter(resource['stream']) as counter:
-        pushed_profile_ids = set()
-        for response in get_all_pages('lists', 'https://a.klaviyo.com/api/v1/lists', api_key):
-            lists = response
-            lists = lists['data']
-            total_lists = len(lists)
-            current_list = 0
-            for list in lists:
-                current_list += 1
-                logger.info("Syncing list " + list['id'] + " : " + str(current_list) + " of " + str(total_lists))
+def transfrom_and_write_records(events, stream, included, valid_relationships):
+    event_stream = stream['stream']
+    event_schema = stream['schema']
+    event_mdata = metadata.to_map(stream['metadata'])
 
-                list_endpoint = 'https://a.klaviyo.com/api/v2/group/' + list['id'] + '/members/all'
-                next_marker = True
-                marker = None
-                while next_marker:
-                    data = request_with_retry(list_endpoint, params={'api_key': api_key, 'marker': marker})
-                    if "records" not in data:
-                        break
-                    records = data['records']
-                    logger.info("This list " + list['id'] + " has : " + str(len(records)))
-                    if resource["tap_stream_id"] == "profiles":
-                        for record in records:
-                            if record["id"] not in pushed_profile_ids:
-                                endpoint = f"https://a.klaviyo.com/api/v1/person/{record['id']}"
-                                datas = request_with_retry(endpoint, params={'api_key': api_key})
-                                datas = singer.transform(datas, resource['schema'])
-                                singer.write_records(resource['stream'], [datas])
-                                pushed_profile_ids.add(record["id"])
-                    else:
-                        for record in records:
-                            record['list_id'] = list['id']
-                            counter.increment()
-                        singer.write_records(resource['stream'], records)
-                    if "marker" in data:
-                        marker = data['marker']
-                        next_marker = True
-                    else:
-                        break
-
-
-def get_flow_emails(resource, api_key):
-    with metrics.record_counter(resource['stream']) as counter:
-        for response in get_all_pages('lists', 'https://a.klaviyo.com/api/v1/flows', api_key):
-            flows = response and response["data"]
-            total_flows = len(flows)
-            current_flow = 0
-            for flow in flows:
-                current_flow += 1
-                logger.info("Syncing flow " + flow['id'] + ": " + str(current_flow) + " of " + str(total_flows))
-
-                action_endpoint = 'https://a.klaviyo.com/api/v1/flow/' + flow['id'] + '/actions'
-                actions = request_with_retry(action_endpoint, params={'api_key': api_key})
-                actions = actions and [action["id"] for action in actions if action["type"] == "SEND_MESSAGE"] or []
-                if not actions:
+    with Transformer() as transformer:
+        for event in events:
+            # Flatten the event dict with attributes
+            event.update(event['attributes'])
+            for relationship_key, relationship_value in event.get('relationships',{}).items():
+                if not relationship_key in valid_relationships:
                     continue
+                relationship_data = relationship_value['data']
+                # Generalizing relationship data to list of dicts for all streams
+                # This is due to the fact that, for Full table streams, data is returned as a list
+                # And, for incremental streams, data is return as a dict in API response
+                if isinstance(relationship_data, dict):
+                    relationship_data = [relationship_data]
+                for relationship in relationship_data:
+                    included_relationship = included.get(relationship['id'], None)
+                    # Check if current relationship is present in included relationship dict
+                    if included_relationship is not None:
+                        # Flatten the included_relationship dict with attributes
+                        included_relationship.update(included_relationship['attributes'])
+                        relationship.update(included_relationship)
+                event.update({relationship_key: relationship_data})
+            # write record
+            singer.write_record(
+                event_stream, 
+                transformer.transform(
+                    event, event_schema, event_mdata
+            ))
 
-                # several actions of type "SEND_MESSAGE" are associated with the flow
-                for action_id in actions:
-                    email_endpoint = 'https://a.klaviyo.com/api/v1/flow/' + flow['id'] + '/action/' + str(
-                        action_id) + '/email'
+# return the 'timeout'
+def get_request_timeout():
+    args = singer.utils.parse_args([])
+    # get the value of request timeout from config
+    config_request_timeout = args.config.get('request_timeout')
 
-                    next_marker = True
-                    marker = None
-                    while next_marker:
-                        flow_emails = request_with_retry(email_endpoint, params={'api_key': api_key, 'marker': marker})
-                        if not flow_emails:
-                            continue
+    # only return the timeout value if it is passed in the config and the value is not 0, "0" or ""
+    if config_request_timeout and float(config_request_timeout):
+        # return the timeout from config
+        return float(config_request_timeout)
 
-                        if isinstance(flow_emails, list):
-                            for email in flow_emails:
-                                flow_emails[email]["flow_id"] = flow["id"]
-                                flow_emails[email]["message_id"] = email["id"]
-                                datas = singer.transform(flow_emails, resource['schema'])
-                                singer.write_records(resource['stream'], [datas])
-                                counter.increment()
-                        else:
-                            flow_emails["flow_id"] = flow["id"]
-                            flow_emails["message_id"] = flow_emails["id"]
-
-                            datas = singer.transform(flow_emails, resource['schema'])
-                            singer.write_records(resource['stream'], [datas])
-
-                        if "marker" in flow_emails:
-                            marker = flow_emails['marker']
-                            next_marker = True
-                        else:
-                            break
+    # return default timeout
+    return REQUEST_TIMEOUT

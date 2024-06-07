@@ -1,26 +1,78 @@
 {
-  "type": "object",
+  "type": [
+    "null",
+    "object"
+  ],
   "properties": {
     "created": {
-      "type": "string"
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
     },
     "updated": {
-      "type": "string"
-    },
-    "person_count": {
-      "type": "integer"
-    },
-    "object": {
-      "type": "string"
-    },
-    "name": {
-      "type": "string"
+      "type": [
+        "null",
+        "string"
+      ],
+      "format": "date-time"
     },
     "type": {
-      "type": "string"
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "name": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "tags": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": [
+          "null",
+          "object"
+        ],
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      }
     },
     "id": {
-      "type": "string"
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "opt_in_process": {
+      "type": [
+        "null",
+        "string"
+      ]
     }
   }
 }
